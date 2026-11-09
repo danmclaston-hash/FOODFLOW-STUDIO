@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FoodFlow Studio</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.png">
+<meta name="theme-color" content="#14532d">
+<style>
+:root{
+  --bg:#f6f8f4; --card:#ffffff; --ink:#1a2e1a; --mut:#5c6f5c;
+  --green:#14532d; --accent:#2a7f62; --red:#b4452f; --line:#dde5da;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101510; --card:#1a221a; --ink:#e8efe6; --mut:#9db09a;
+    --green:#7fc8a4; --accent:#5fb893; --red:#e08a73; --line:#2c372c;
+  }
+}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+header{background:var(--green);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}
+header h1{font-size:1.15rem;margin:0}
+header small{opacity:.8}
+main{max-width:980px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 16px}
+.card h2{margin:0 0 6px;font-size:1.05rem}
+.card p.why{color:var(--mut);margin:0 0 12px;font-size:.92rem}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;
+  font-size:1rem;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+input[type=file]{width:100%} input[type=text],select{padding:9px;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg);color:var(--ink);font-size:1rem}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+th{color:var(--mut);font-weight:600}
+.ok{color:var(--accent);font-weight:600}.bad{color:var(--red);font-weight:600}
+.pill{display:inline-block;background:var(--bg);border:1px solid var(--line);
+  border-radius:99px;padding:2px 10px;margin:2px;font-size:.85rem}
+.msg{padding:8px 0;border-bottom:1px dashed var(--line)}
+.msg b{color:var(--accent)}
+#log{color:var(--mut);font-size:.9rem;min-height:1.4em}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.scroll{overflow-x:auto}
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+  border-radius:50%;background:var(--accent);color:#fff;font-size:.85rem;margin-right:8px}
+@media (max-width:480px){main{padding:10px} .card{padding:12px}}
+</style>
+</head>
+<body>
+<header>
+  <img src="icon.png" width="30" height="30" alt="">
+  <h1>FoodFlow Studio</h1>
+  <small>feed data &rarr; it checks, learns, forecasts</small>
+</header>
+<main>
+
+<div class="card">
+  <h2><span class="step-num">1</span>Feed it data</h2>
+  <p class="why">Give it a food-price file (CSV or Excel) with at least: a date, a market/place,
+  a food name and a price. Extra files (weather, fuel, exchange rates) with a month column
+  become extra clues automatically.</p>
+  <input type="file" id="files" multiple accept=".csv,.xlsx,.xls">
+  <div style="margin-top:10px" class="row">
+    <button id="btnUpload">Check my data</button><span id="log"></span>
+  </div>
+  <div id="doctor"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">2</span>Train</h2>
+  <p class="why">It studies the past, then sits 4 fair exams: train on the past only,
+  predict the next 6 months, repeat. It must beat the lazy guess "same as last month".</p>
+  <div class="row">
+    <label>Foods <select id="foods" multiple size="4" style="min-width:220px"></select></label>
+    <label>How far ahead
+      <select id="horizon"><option value="1">1 month</option><option value="3">3 months</option></select>
+    </label>
+    <button id="btnTrain" disabled>Train &amp; examine</button>
+  </div>
+  <p class="why" style="margin-top:6px">Leave foods unselected to use all with enough history.</p>
+  <div id="results"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">3</span>Forecast</h2>
+  <p class="why">Next month's price per food per market, with a low-high range
+  (the honest "we are not sure" part) and an up/down/steady arrow.</p>
+  <div class="row">
+    <input type="text" id="filter" placeholder="filter: maize, Gulu..." style="flex:1;min-width:160px">
+    <a id="dl" class="pill" href="/api/forecast.csv" download hidden>download CSV</a>
+  </div>
+  <div class="scroll" id="fc"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">4</span>Ask the analyst</h2>
+  <p class="why">Answers come only from the trained results, never invented. Plug in a free
+  open-source LLM (Ollama) on your PC for free-form chat; without it, a built-in rule brain answers.</p>
+  <div class="row">
+    <input type="text" id="q" placeholder="How accurate is it? What goes up next month? Why?" style="flex:1;min-width:200px">
+    <button id="btnAsk">Ask</button>
+  </div>
+  <div id="chat"></div>
+</div>
+
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const log=t=>{$('#log').textContent=t};
+let trained=false;
+
+function table(rows, cols){
+  if(!rows||!rows.length) return '<p class="why">nothing yet</p>';
+  cols = cols || Object.keys(rows[0]);
+  let h='<table><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>';
+  for(const r of rows){h+='<tr>'+cols.map(c=>{
+    let v=r[c]; if(typeof v==='boolean') v=v?'<span class="ok">yes ✓</span>':'<span class="bad">no</span>';
+    if(c==='trend') v=v==='up'?'<span class="bad">▲ up</span>':v==='down'?'<span class="ok">▼ down</span>':'▶ steady';
+    return `<td>${v??''}</td>`}).join('')+'</tr>'}
+  return h+'</table>';
+}
+
+$('#btnUpload').onclick=async()=>{
+  const fs=$('#files').files; if(!fs.length){log('Pick a file first.');return}
+  log('Reading and checking…'); $('#btnUpload').disabled=true;
+  const fd=new FormData(); for(const f of fs) fd.append('files',f);
+  try{
+    const r=await fetch('/api/upload',{method:'POST',body:fd}); const j=await r.json();
+    if(j.error) throw new Error(j.error);
+    let html='';
+    for(const rep of j.reports){
+      html+=`<h3 style="margin:14px 0 4px">${rep.file} <span class="pill">${rep.role}</span>
+        ${rep.ok?'<span class="ok">usable ✓</span>':'<span class="bad">cannot use ✗</span>'}</h3>`;
+      if(rep.facts&&rep.facts.rows) html+=`<p>${rep.facts.rows.toLocaleString()} rows ·
+        ${rep.facts.markets} markets · ${rep.facts.foods} foods · ${rep.facts.from} → ${rep.facts.to}
+        · ${rep.facts.usable_series||0} food+market series with 24+ months</p>`;
+      for(const p of rep.problems||[]) html+=`<p class="bad">⚠ ${p}</p>`;
+      for(const f of rep.fixes||[]) html+=`<p class="why">🔧 ${f}</p>`;
+      for(const q of rep.questions||[]) html+=`<p><b>Doctor asks:</b> ${q}</p>`;
+    }
+    $('#doctor').innerHTML=html; log('Done.');
+    const fr=await (await fetch('/api/foods')).json();
+    $('#foods').innerHTML=fr.foods.map(f=>`<option value="${f.name}">${f.name} (${f.rows})</option>`).join('');
+    $('#btnTrain').disabled=false;
+  }catch(e){log('Failed: '+e.message)}
+  $('#btnUpload').disabled=false;
+};
+
+$('#btnTrain').onclick=async()=>{
+  const foods=[...$('#foods').selectedOptions].map(o=>o.value);
+  log('Training and sitting 4 exams… (takes ~10–60 s)'); $('#btnTrain').disabled=true;
+  try{
+    const r=await fetch('/api/train',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({foods,horizon:+$('#horizon').value})});
+    const j=await r.json(); if(j.error) throw new Error(j.error);
+    const wins=j.eval.filter(e=>e.model_wins).length;
+    let html=`<p><b>${j.n_rows.toLocaleString()}</b> learning rows ·
+      <b>${j.n_series}</b> food+market series · learned-move size ${Math.round(j.shrink*100)}%</p>
+      <p>Exam result: model beat the baseline in <b>${wins} of ${j.eval.length}</b> periods
+      ${wins>=Math.ceil(j.eval.length*0.75)?'<span class="ok">— it is learning ✓</span>'
+        :wins>0?'— partly learning':'<span class="bad">— not better than the lazy guess yet</span>'}</p>`;
+    html+='<div class="scroll">'+table(j.eval)+'</div>';
+    html+='<h3>Most useful clues</h3><p>'+Object.entries(j.importances).slice(0,6)
+      .map(([k,v])=>`<span class="pill">${k}</span>`).join('')+'</p>';
+    if(j.anomalies.length) html+='<h3>Price shocks spotted (unsupervised alarm)</h3><div class="scroll">'
+      +table(j.anomalies,['month','commodity','market','change_pct'])+'</div>';
+    $('#results').innerHTML=html;
+    log('Trained. Forecast for '+j.forecast_month+' ready below.');
+    trained=true; $('#dl').hidden=false; loadForecast();
+  }catch(e){log('Failed: '+e.message)}
+  $('#btnTrain').disabled=false;
+};
+
+let fcRows=[];
+async function loadForecast(){
+  const j=await (await fetch('/api/forecast')).json();
+  fcRows=j.rows||[]; renderFc();
+}
+function renderFc(){
+  const f=$('#filter').value.toLowerCase();
+  const rows=fcRows.filter(r=>!f||(r.commodity+' '+r.market).toLowerCase().includes(f)).slice(0,300);
+  $('#fc').innerHTML=table(rows,['commodity','market','last_price','forecast','low','high','trend']);
+}
+$('#filter').oninput=renderFc;
+
+$('#btnAsk').onclick=async()=>{
+  const q=$('#q').value.trim(); if(!q)return;
+  $('#chat').insertAdjacentHTML('afterbegin',`<div class="msg"><b>You:</b> ${q}</div>`);
+  $('#q').value='';
+  const j=await (await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({question:q})})).json();
+  $('#chat').insertAdjacentHTML('afterbegin',
+    `<div class="msg"><b>Analyst (${j.brain||'?'}):</b> ${(j.answer||j.error||'').replace(/\n/g,'<br>')}</div>`);
+};
+$('#q').addEventListener('keydown',e=>{if(e.key==='Enter')$('#btnAsk').click()});
+
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
