@@ -82,3 +82,30 @@ static/                 the PWA (page, manifest, service worker, icons)
 connectors/             NASA POWER + GDELT helpers
 workspace/              your uploaded files and forecast.csv land here
 ```
+
+## Hosting: how the pieces fit
+
+```
+your PC  ──(train)──▶  FoodFlow Studio (this app, Python)
+                           │  publishes results with the SERVICE key
+                           ▼
+                     Supabase (Postgres)  ◀── reads with the public ANON key ──  Cloudflare Pages
+                     runs · forecasts · shocks                                   /dashboard (static)
+```
+
+- **GitHub** holds the code. Pushing to `main` redeploys the dashboard.
+- **Supabase** project `foodflow` (eu-west-1) holds results. Tables: `runs`,
+  `forecasts`, `shocks`. Row Level Security: anyone can read, only the
+  service key can write. Schema is in the project's migration `foodflow_schema`.
+- **Cloudflare Pages** hosts `dashboard/` (see `dashboard/README.md`).
+- **Why not run the ML on Cloudflare?** Workers can't run scikit-learn
+  training. The brain stays on your PC (or a small VPS later); only results go online.
+
+### Enable publishing from the app
+```bash
+export SUPABASE_URL=https://fdrzjxyhxwwkordscicn.supabase.co
+export SUPABASE_SERVICE_KEY=<Supabase -> Project Settings -> API -> service_role>
+uvicorn app:app --port 8000
+```
+After every *Train & examine*, results are pushed as a new run and the
+dashboard shows the latest one. Never commit the service key.

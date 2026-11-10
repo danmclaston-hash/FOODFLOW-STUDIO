@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FoodFlow Forecasts</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.png">
+<meta name="theme-color" content="#14532d">
+<style>
+:root{--bg:#f6f8f4;--card:#fff;--ink:#1a2e1a;--mut:#5c6f5c;--green:#14532d;--accent:#2a7f62;--red:#b4452f;--line:#dde5da}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101510;--card:#1a221a;--ink:#e8efe6;--mut:#9db09a;--green:#7fc8a4;--accent:#5fb893;--red:#e08a73;--line:#2c372c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+header{background:var(--green);color:#fff;padding:14px 16px;display:flex;gap:10px;align-items:center}
+header h1{font-size:1.15rem;margin:0}header small{opacity:.8}
+main{max-width:980px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.card h2{margin:0 0 6px;font-size:1.05rem}.why{color:var(--mut);font-size:.92rem;margin:0 0 10px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0}
+.kpi{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px}
+.kpi b{font-size:1.4rem;display:block}.kpi span{color:var(--mut);font-size:.85rem}
+table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+th{color:var(--mut);font-weight:600}.ok{color:var(--accent);font-weight:600}.bad{color:var(--red);font-weight:600}
+.scroll{overflow-x:auto}input,select{padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:1rem}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+@media (max-width:480px){main{padding:10px}.card{padding:12px}}
+</style>
+</head>
+<body>
+<header><img src="icon.png" width="30" height="30" alt=""><h1>FoodFlow Forecasts</h1><small id="asof">loading…</small></header>
+<main>
+<div class="card">
+  <h2>How well does the model do?</h2>
+  <p class="why">Fair exams: trained on the past only, tested on the next 6 months, compared with the lazy guess "same as last month". Errors are in local currency per kg (UGX for Uganda).</p>
+  <div class="kpis" id="kpis"></div>
+  <div class="scroll" id="exam"></div>
+</div>
+<div class="card">
+  <h2>Next month's forecast</h2>
+  <p class="why">Per food per market, with a low–high range (we are about 80% sure the real price lands inside it) and an up / down / steady arrow.</p>
+  <div class="row"><input id="filter" placeholder="filter: maize, Gulu…" style="flex:1;min-width:160px"><select id="trend"><option value="">all trends</option><option>up</option><option>down</option><option>steady</option></select></div>
+  <div class="scroll" id="fc" style="margin-top:10px"></div>
+</div>
+<div class="card">
+  <h2>Recent price shocks</h2>
+  <p class="why">Months where a price moved more than 3× that market's normal wobble. These are early-warning flags, not explanations.</p>
+  <div class="scroll" id="shocks"></div>
+</div>
+<p class="why">Data: World Food Programme market prices via the Humanitarian Data Exchange. Forecasts are statistical guides, not promises. Built by Okecho Danmark Laston · FoodFlow.</p>
+</main>
+<script>
+// Public read-only keys: Row Level Security on the database allows SELECT only.
+const SUPABASE_URL = "https://fdrzjxyhxwwkordscicn.supabase.co";
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZkcnpqeHloeHd3a29yZHNjaWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQyNTg3OTAsImV4cCI6MjEwOTgzNDc5MH0.UqFO5DWQOeG1gvFtAJmm7I9u80zKV-SpWbRsjOxkEx8";
+const $=s=>document.querySelector(s);
+const api=async (path)=>{const r=await fetch(SUPABASE_URL+"/rest/v1/"+path,{headers:{apikey:ANON_KEY,Authorization:"Bearer "+ANON_KEY}});if(!r.ok)throw new Error(r.status+" "+await r.text());return r.json()};
+function table(rows,cols){if(!rows||!rows.length)return'<p class="why">nothing yet</p>';let h='<table><tr>'+cols.map(c=>`<th>${c.replace(/_/g,' ')}</th>`).join('')+'</tr>';
+ for(const r of rows){h+='<tr>'+cols.map(c=>{let v=r[c];if(typeof v==='boolean')v=v?'<span class="ok">yes ✓</span>':'<span class="bad">no</span>';
+  if(c==='trend')v=v==='up'?'<span class="bad">▲ up</span>':v==='down'?'<span class="ok">▼ down</span>':'▶ steady';
+  if(typeof v==='number')v=Math.round(v).toLocaleString();return`<td>${v??''}</td>`}).join('')+'</tr>'}return h+'</table>'}
+let fcRows=[];
+function renderFc(){const f=$('#filter').value.toLowerCase(),t=$('#trend').value;
+ const rows=fcRows.filter(r=>(!f||(r.commodity+' '+r.market).toLowerCase().includes(f))&&(!t||r.trend===t)).slice(0,400);
+ $('#fc').innerHTML=table(rows,['commodity','market','last_price','forecast','low','high','trend'])}
+$('#filter').oninput=renderFc;$('#trend').onchange=renderFc;
+(async()=>{try{
+ const runs=await api("runs?select=*&order=created_at.desc&limit=1");if(!runs.length){$('#asof').textContent='no runs yet';return}
+ const run=runs[0];const ex=run.exam||[];const wins=ex.filter(e=>e.model_wins).length;
+ $('#asof').textContent='run #'+run.id+' · '+new Date(run.created_at).toLocaleDateString()+' · '+run.dataset;
+ $('#kpis').innerHTML=`<div class="kpi"><b>${wins} / ${ex.length}</b><span>exams won vs baseline</span></div>
+  <div class="kpi"><b>${(run.n_rows||0).toLocaleString()}</b><span>learning rows</span></div>
+  <div class="kpi"><b>${run.n_series||0}</b><span>food × market series</span></div>
+  <div class="kpi"><b>${ex.length?ex[ex.length-1].right_when_it_did:'—'}</b><span>right when it took a side (latest exam)</span></div>`;
+ $('#exam').innerHTML=table(ex,['test_window','rows','baseline_MAE','model_MAE','model_wins','took_a_side','right_when_it_did']);
+ fcRows=await api(`forecasts?select=commodity,market,last_price,forecast,low,high,trend&run_id=eq.${run.id}&order=commodity,market&limit=2000`);renderFc();
+ const sh=await api(`shocks?select=month,commodity,market,change_pct&run_id=eq.${run.id}&order=month.desc&limit=30`);
+ $('#shocks').innerHTML=table(sh.map(s=>({...s,month:s.month.slice(0,7)})),['month','commodity','market','change_pct']);
+}catch(e){$('#asof').textContent='could not load: '+e.message}})();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>

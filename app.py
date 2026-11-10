@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from engine import pipeline as P
 from engine import doctor as D
 from engine import analyst as A
+from engine import publish as PUB
 
 app = FastAPI(title="FoodFlow Studio")
 os.makedirs("workspace", exist_ok=True)
@@ -87,7 +88,14 @@ async def train(cfg: dict):
         STATE.update(panel=panel, data=data, feats=feats, eval=ev, bundle=bundle,
                      forecast=fc, anomalies=an, importances=imp, groups=gr)
         fc.to_csv("workspace/forecast.csv", index=False)
+        pub = {"published": False}
+        if PUB.enabled():
+            try:
+                pub = PUB.publish(STATE, dataset=cfg.get("dataset", "upload"), horizon=horizon)
+            except Exception as e:
+                pub = {"published": False, "reason": str(e)[:200]}
         return {
+            "published": pub,
             "eval": ev.to_dict("records"),
             "importances": {k: round(float(v), 5) for k, v in imp.head(10).items()},
             "n_rows": int(data["y"].notna().sum()),
@@ -121,6 +129,16 @@ async def forecast_csv():
 async def ask(q: dict):
     try:
         return A.ask(str(q.get("question", "")), STATE)
+    except Exception as e:
+        return _err(e)
+
+
+@app.post("/api/publish")
+async def publish_now():
+    try:
+        if STATE.get("forecast") is None:
+            return JSONResponse({"error": "Train first."}, status_code=400)
+        return PUB.publish(STATE, dataset="manual", horizon=1)
     except Exception as e:
         return _err(e)
 

@@ -168,7 +168,8 @@ $('#btnTrain').onclick=async()=>{
     if(j.anomalies.length) html+='<h3>Price shocks spotted (unsupervised alarm)</h3><div class="scroll">'
       +table(j.anomalies,['month','commodity','market','change_pct'])+'</div>';
     $('#results').innerHTML=html;
-    log('Trained. Forecast for '+j.forecast_month+' ready below.');
+    log('Trained. Forecast for '+j.forecast_month+' ready below.'
+        +(j.published&&j.published.published?' Published to Supabase (run #'+j.published.run_id+').':''));
     trained=true; $('#dl').hidden=false; loadForecast();
   }catch(e){log('Failed: '+e.message)}
   $('#btnTrain').disabled=false;
